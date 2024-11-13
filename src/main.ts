@@ -1,4 +1,3 @@
-// todo
 // Import Leaflet and required modules
 import "leaflet/dist/leaflet.css";
 import "./style.css";
@@ -34,7 +33,7 @@ const map = leaflet.map("map", {
 
 // Add OpenStreetMap tile layer
 leaflet.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
-  maxZoom: 18,
+  maxZoom: 19,
   attribution:
     '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>',
 }).addTo(map);
@@ -58,7 +57,7 @@ function spawnCache(i: number, j: number) {
   ]);
 
   // Create a marker for the cache
-  const cacheMarker = leaflet.rectangle(bounds, { color: "blue", weight: 1 });
+  const cacheMarker = leaflet.rectangle(bounds, { color: "purple", weight: 1 });
   cacheMarker.addTo(map);
 
   // Set an initial, procedurally generated coin count for the cache
