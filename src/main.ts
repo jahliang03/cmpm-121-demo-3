@@ -8,10 +8,15 @@ import luck from "./luck.ts"; // Deterministic random generator
 // Define constants
 const oakes_classroom = leaflet.latLng(36.98949379578401, -122.06277128548504);
 const zoom_level = 19;
-const tile_deg = 1e-4;
+const tile_deg = 1e-4; // Movement and cache granularity
 const neighborhood_size = 8;
 const cache_spaw_prob = 0.1;
 const scale_fac = 1e4;
+
+// State variables
+const player_location = { lat: oakes_classroom.lat, lng: oakes_classroom.lng };
+const cached_locations = new Map<string, CacheState>();
+const player_inventory: Coin[] = [];
 
 // Set up app title and status panel
 const app: HTMLDivElement = document.querySelector("#app")!;
@@ -23,15 +28,14 @@ header.innerHTML = appName;
 app.append(header);
 
 const statusPanel = document.querySelector<HTMLDivElement>("#statusPanel")!;
-const playerInventory: Coin[] = [];
 statusPanel.innerHTML = "Coins collected: 0";
 
-// Convert latitude and longitude to grid coordinates,
+// Utility: Convert latitude and longitude to grid cell
 function latLngToGridCell(lat: number, lng: number): { i: number; j: number } {
   return { i: Math.round(lat * scale_fac), j: Math.round(lng * scale_fac) };
 }
 
-// Implement CacheLocation with Flyweight Pattern
+// CacheLocation class (Flyweight Pattern)
 class CacheLocation {
   static locations = new Map<string, CacheLocation>();
   private constructor(public i: number, public j: number) {}
@@ -48,6 +52,11 @@ class CacheLocation {
   toString() {
     return `${this.i}:${this.j}`;
   }
+}
+
+// Memento Pattern: CacheState
+class CacheState {
+  constructor(public location: CacheLocation, public coins: Coin[]) {}
 }
 
 // Coin class with unique identity
@@ -74,7 +83,6 @@ leaflet.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
   attribution: "&copy; OpenStreetMap contributors",
 }).addTo(map);
 
-// Player marker
 const playerMarker = leaflet.marker(oakes_classroom);
 playerMarker.bindTooltip("This is you!");
 playerMarker.addTo(map);
@@ -85,6 +93,10 @@ function spawnCache(i: number, j: number) {
   const lat = origin.lat + i * tile_deg;
   const lng = origin.lng + j * tile_deg;
   const location = CacheLocation.get(lat, lng);
+
+  if (cached_locations.has(location.toString())) {
+    return; // Avoid duplicate cache creation
+  }
 
   const bounds = leaflet.latLngBounds([
     [lat, lng],
@@ -100,40 +112,42 @@ function spawnCache(i: number, j: number) {
     (_, serial) => new Coin(location, serial),
   );
 
+  cached_locations.set(
+    location.toString(),
+    new CacheState(location, cacheCoins),
+  );
+
   cacheMarker.bindPopup(() => {
     const popupDiv = document.createElement("div");
+    const cacheState = cached_locations.get(location.toString())!;
     popupDiv.innerHTML = `
       <div>Cache at ${location}. Coins: ${
-      cacheCoins.map((coin) => coin.toString()).join(", ")
+      cacheState.coins.map((coin) => coin.toString()).join(", ")
     }</div>
       <button id="collect">Collect Coin</button>
       <button id="deposit">Deposit Coin</button>
     `;
 
     popupDiv.querySelector("#collect")!.addEventListener("click", () => {
-      if (cacheCoins.length > 0) {
-        const collectedCoin = cacheCoins.pop()!;
-        playerInventory.push(collectedCoin);
-        statusPanel.innerHTML = `Coins collected: ${
-          playerInventory.map((coin) => coin.toString()).join(", ")
-        }`;
+      if (cacheState.coins.length > 0) {
+        const collectedCoin = cacheState.coins.pop()!;
+        player_inventory.push(collectedCoin);
+        updateStatusPanel();
         popupDiv.querySelector("div")!.innerHTML =
           `Cache at ${location}. Coins: ${
-            cacheCoins.map((coin) => coin.toString()).join(", ")
+            cacheState.coins.map((coin) => coin.toString()).join(", ")
           }`;
       }
     });
 
     popupDiv.querySelector("#deposit")!.addEventListener("click", () => {
-      if (playerInventory.length > 0) {
-        const depositedCoin = playerInventory.pop()!;
-        cacheCoins.push(depositedCoin);
-        statusPanel.innerHTML = `Coins collected: ${
-          playerInventory.map((coin) => coin.toString()).join(", ")
-        }`;
+      if (player_inventory.length > 0) {
+        const depositedCoin = player_inventory.pop()!;
+        cacheState.coins.push(depositedCoin);
+        updateStatusPanel();
         popupDiv.querySelector("div")!.innerHTML =
           `Cache at ${location}. Coins: ${
-            cacheCoins.map((coin) => coin.toString()).join(", ")
+            cacheState.coins.map((coin) => coin.toString()).join(", ")
           }`;
       }
     });
@@ -142,11 +156,69 @@ function spawnCache(i: number, j: number) {
   });
 }
 
-// Generate caches in the neighborhood
-for (let i = -neighborhood_size; i <= neighborhood_size; i++) {
-  for (let j = -neighborhood_size; j <= neighborhood_size; j++) {
-    if (luck([i, j].toString()) < cache_spaw_prob) {
-      spawnCache(i, j);
+// Generate caches in the neighborhood once
+function generateInitialCaches() {
+  for (let i = -neighborhood_size; i <= neighborhood_size; i++) {
+    for (let j = -neighborhood_size; j <= neighborhood_size; j++) {
+      if (luck([i, j].toString()) < cache_spaw_prob) {
+        spawnCache(i, j);
+      }
     }
   }
 }
+
+// Update the player marker
+function updatePlayerMarker() {
+  playerMarker.setLatLng(player_location);
+}
+
+// Update the status panel
+function updateStatusPanel() {
+  statusPanel.innerHTML = `Coins collected: ${
+    player_inventory
+      .map((coin) => coin.toString())
+      .join(", ")
+  }`;
+}
+
+// Handle player movement
+function movePlayer(direction: "north" | "south" | "east" | "west") {
+  switch (direction) {
+    case "north":
+      player_location.lat += tile_deg;
+      break;
+    case "south":
+      player_location.lat -= tile_deg;
+      break;
+    case "east":
+      player_location.lng += tile_deg;
+      break;
+    case "west":
+      player_location.lng -= tile_deg;
+      break;
+  }
+  updatePlayerMarker();
+}
+
+// Add event listeners to movement buttons
+document.getElementById("north")!.addEventListener(
+  "click",
+  () => movePlayer("north"),
+);
+document.getElementById("south")!.addEventListener(
+  "click",
+  () => movePlayer("south"),
+);
+document.getElementById("east")!.addEventListener(
+  "click",
+  () => movePlayer("east"),
+);
+document.getElementById("west")!.addEventListener(
+  "click",
+  () => movePlayer("west"),
+);
+
+// Initialize the game
+generateInitialCaches();
+updatePlayerMarker();
+updateStatusPanel();
